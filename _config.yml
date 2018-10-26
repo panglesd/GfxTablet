@@ -1,0 +1,8 @@
+title: GfxTablet
+description: Android app to control a virtual Network Tablet on Linux
+google_analytics: UA-3305033-11
+show_downloads: true
+theme: jekyll-theme-architect
+
+gems:
+  - jekyll-mentions
