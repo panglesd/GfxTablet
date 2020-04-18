@@ -1,5 +1,5 @@
 Added by panglesd
-==================
+-----------------
 
 * In the driver, on the computer side, you can now give argument in the command line to modify the behaviour.
 ``` ./networktablet --sensitivity 25000 --restrict 10000 10000 2 2 ```
