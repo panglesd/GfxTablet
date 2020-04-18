@@ -136,11 +136,47 @@ void quit(int signal) {
 }
 
 
-int main(void)
+int main(int argc, char *argv[])
 {
 	int device;
 	struct event_packet ev_pkt;
 
+	int parseint = 1;
+	uint16_t sensitivity = 0;
+	uint16_t cX = 0;
+	uint16_t cY = 0;
+	uint16_t scaleX = 1;
+	uint16_t scaleY = 1;
+	printf("%d\n", argc);
+	for(parseint=1; parseint< argc; parseint++) {
+	  if(!strcmp(argv[parseint], "--sensitivity")) {
+	    if(parseint == argc-1) {
+	      printf("0 Usage: %s < --sensitivity n > < --restrict x y scaleX scaleY >\n", argv[0]);
+	      exit(0);
+	    }
+	    parseint ++;
+	    sensitivity = atoi(argv[parseint]);
+	  }
+	  else if(!strcmp(argv[parseint], "--restrict")) {
+	    if(argc <= parseint + 4 ) {
+	      printf("1 Usage: %s < --sensitivity n > < --restrict x y scaleX scaleY >\n", argv[0]);
+	      exit(0);
+	    }
+	    parseint ++;
+	    cX = atoi(argv[parseint]);
+	    parseint ++;
+	    cY = atoi(argv[parseint]);
+	    parseint ++;
+	    scaleX = atoi(argv[parseint]);
+	    parseint ++;
+	    scaleY = atoi(argv[parseint]);
+	  }
+	  else {
+	      printf("  Usage: %s < --sensitivity n > < --restrict x y scaleX scaleY >\n", argv[0]);
+	      exit(0);	    
+	  }
+	}
+	
 	if ((device = open("/dev/uinput", O_WRONLY | O_NONBLOCK)) < 0)
 		die("error: open");
 
@@ -170,10 +206,15 @@ int main(void)
 		ev_pkt.x = ntohs(ev_pkt.x);
 		ev_pkt.y = ntohs(ev_pkt.y);
 		ev_pkt.pressure = ntohs(ev_pkt.pressure);
+		if(ev_pkt.pressure < sensitivity)
+		  ev_pkt.pressure = 0;
+		else
+		  ev_pkt.pressure = ev_pkt.pressure - sensitivity;
+		  
 		printf("x: %hu, y: %hu, pressure: %hu\n", ev_pkt.x, ev_pkt.y, ev_pkt.pressure);
 
-		send_event(device, EV_ABS, ABS_X, ev_pkt.x);
-		send_event(device, EV_ABS, ABS_Y, ev_pkt.y);
+		send_event(device, EV_ABS, ABS_X, ev_pkt.x/scaleX + cX);
+		send_event(device, EV_ABS, ABS_Y, ev_pkt.y/scaleY + cY);
 		send_event(device, EV_ABS, ABS_PRESSURE, ev_pkt.pressure);
 
 		switch (ev_pkt.type) {
