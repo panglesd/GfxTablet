@@ -1,3 +1,13 @@
+Added by panglesd
+==================
+
+* In the driver, on the computer side, you can now give argument in the command line to modify the behaviour.
+``` ./networktablet --sensitivity 25000 --restrict 10000 10000 2 2 ```
+for instance to 
+  * trigger a click only if the pressure is more than 25000
+  * restrict the move to a box starting at 10000 10000 and of half size
+  
+
 
 **This project is not maintained anymore. If you're interested in taking it over,
 please tell me at info@bitfire.at.**
