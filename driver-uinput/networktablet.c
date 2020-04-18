@@ -149,7 +149,7 @@ int main(int argc, char *argv[])
 	uint16_t scaleY = 1;
 	printf("%d\n", argc);
 	for(parseint=1; parseint< argc; parseint++) {
-	  if(!strcmp(argv[parseint], "--sensitivity")) {
+	  if(!strcmp(argv[parseint], "--sensitivity", strlen("--sensitivity"))) {
 	    if(parseint == argc-1) {
 	      printf("0 Usage: %s < --sensitivity n > < --restrict x y scaleX scaleY >\n", argv[0]);
 	      exit(0);
@@ -157,7 +157,7 @@ int main(int argc, char *argv[])
 	    parseint ++;
 	    sensitivity = atoi(argv[parseint]);
 	  }
-	  else if(!strcmp(argv[parseint], "--restrict")) {
+	  else if(!strcmp(argv[parseint], "--restrict", strlen("--restrict"))) {
 	    if(argc <= parseint + 4 ) {
 	      printf("1 Usage: %s < --sensitivity n > < --restrict x y scaleX scaleY >\n", argv[0]);
 	      exit(0);
