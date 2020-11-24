@@ -1,4 +1,9 @@
-
+/* Compile with 
+ * gcc networktablet.c -lX11 `pkg-config --cflags --libs gtk+-3.0`
+ * */
+#include <X11/Xlib.h>
+#include <cairo-xlib.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,11 +24,22 @@
   }
 
 
-int udp_socket;
+int udp_socket, sending;
+Display *disp;
+
+typedef struct event_packet event_packet;
+typedef struct sockaddr_in sockaddr_in;
+
+typedef struct sending_t {
+  sockaddr_in from;
+  int slen;
+} sending_t;
 
 
 void init_device(int fd)
 {
+  struct uinput_user_dev uidev;
+  
   // enable synchronization
   if (ioctl(fd, UI_SET_EVBIT, EV_SYN) < 0)
     die("error: ioctl UI_SET_EVBIT EV_SYN");
@@ -50,67 +66,34 @@ void init_device(int fd)
   if (ioctl(fd, UI_SET_ABSBIT, ABS_PRESSURE) < 0)
     die("error: ioctl UI_SETEVBIT ABS_PRESSURE");
 
-  {
-    struct uinput_abs_setup abs_setup;
-    struct uinput_setup setup;
+  memset(&uidev, 0, sizeof(uidev));
+  snprintf(uidev.name, UINPUT_MAX_NAME_SIZE, "Network Tablet");
+  uidev.id.bustype = BUS_VIRTUAL;
+  uidev.id.vendor  = 0x1;
+  uidev.id.product = 0x1;
+  uidev.id.version = 1;
+  uidev.absmin[ABS_X] = 0;
+  uidev.absmax[ABS_X] = UINT16_MAX;
+  uidev.absmin[ABS_Y] = 0;
+  uidev.absmax[ABS_Y] = UINT16_MAX;
+  uidev.absmin[ABS_PRESSURE] = 0;
+  uidev.absmax[ABS_PRESSURE] = INT16_MAX;
+  if (write(fd, &uidev, sizeof(uidev)) < 0)
+    die("error: write");
 
-    memset(&abs_setup, 0, sizeof(abs_setup));
-    abs_setup.code = ABS_X;
-    abs_setup.absinfo.value = 0;
-    abs_setup.absinfo.minimum = 0;
-    abs_setup.absinfo.maximum = UINT16_MAX;
-    abs_setup.absinfo.fuzz = 0;
-    abs_setup.absinfo.flat = 0;
-    abs_setup.absinfo.resolution = 400;
-    if (ioctl(fd, UI_ABS_SETUP, &abs_setup) < 0)
-      die("error: UI_ABS_SETUP ABS_X");
-
-    memset(&abs_setup, 0, sizeof(abs_setup));
-    abs_setup.code = ABS_Y;
-    abs_setup.absinfo.value = 0;
-    abs_setup.absinfo.minimum = 0;
-    abs_setup.absinfo.maximum = UINT16_MAX;
-    abs_setup.absinfo.fuzz = 0;
-    abs_setup.absinfo.flat = 0;
-    abs_setup.absinfo.resolution = 400;
-    if (ioctl(fd, UI_ABS_SETUP, &abs_setup) < 0)
-      die("error: UI_ABS_SETUP ABS_Y");
-
-    memset(&abs_setup, 0, sizeof(abs_setup));
-    abs_setup.code = ABS_PRESSURE;
-    abs_setup.absinfo.value = 0;
-    abs_setup.absinfo.minimum = 0;
-    abs_setup.absinfo.maximum = INT16_MAX;
-    abs_setup.absinfo.fuzz = 0;
-    abs_setup.absinfo.flat = 0;
-    abs_setup.absinfo.resolution = 0;
-    if (ioctl(fd, UI_ABS_SETUP, &abs_setup) < 0)
-      die("error: UI_ABS_SETUP ABS_PRESSURE");
-
-    memset(&setup, 0, sizeof(setup));
-    snprintf(setup.name, UINPUT_MAX_NAME_SIZE, "Network Tablet");
-    setup.id.bustype = BUS_VIRTUAL;
-    setup.id.vendor  = 0x1;
-    setup.id.product = 0x1;
-    setup.id.version = 2;
-    setup.ff_effects_max = 0;
-    if (ioctl(fd, UI_DEV_SETUP, &setup) < 0)
-      die("error: UI_DEV_SETUP");
-
-    if (ioctl(fd, UI_DEV_CREATE) < 0)
-      die("error: ioctl");
-  }
+  if (ioctl(fd, UI_DEV_CREATE) < 0)
+    die("error: ioctl");
 }
 
 int prepare_socket()
 {
   int s;
-  struct sockaddr_in addr;
+  sockaddr_in addr;
 
   if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
     die("error: prepare_socket()");
 
-  bzero(&addr, sizeof(struct sockaddr_in));
+  bzero(&addr, sizeof(sockaddr_in));
   addr.sin_family = AF_INET;
   addr.sin_port = htons(GFXTABLET_PORT);
   addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -135,11 +118,81 @@ void quit(int signal) {
   close(udp_socket);
 }
 
+void msleep(int ms){
+  struct timespec req = {0};
+  req.tv_sec = 0;
+  req.tv_nsec = ms * 1000000L;
+  nanosleep(&req, (struct timespec *)NULL);
+}
+void *send_current_screen(void *arg){
+  while (sending) {
+    msleep(500);
+  }
+  printf("\nsend_thread\n");
+  sending_t *args = (sending_t*) arg;
+  sockaddr_in from = args->from;
+  int slen = args->slen;
 
-int main(int argc, char *argv[])
-{
+  if (!disp) {
+    return NULL;
+  }
+
+  sending=1;
+  Window root;
+  cairo_surface_t *surface;
+  int scr;
+  scr = DefaultScreen(disp);
+  root = DefaultRootWindow(disp);
+  /* get the root surface on given display */
+  surface = cairo_xlib_surface_create(disp, root, DefaultVisual(disp, scr),
+                          DisplayWidth(disp, scr),
+                          DisplayHeight(disp, scr));
+  /* right now, the tool only outputs PNG images */
+  cairo_surface_write_to_png( surface, "test.png" );
+  /* free the memory*/
+  cairo_surface_destroy(surface);
+
+  FILE *istream;
+  if ( (istream = fopen("test.png", "r" ) ) == NULL ){
+    die("file non-existant!");
+  }
+  from.sin_port = htons(GFXTABLET_PORT);
+  int max=60000;
+  char buff[max+31];
+  int n=1;
+  fseek(istream, 0, SEEK_END); // seek to end of file
+  long size = ftell(istream); // get current file pointer
+  int packets = size /  max + 1;
+  fseek(istream, 0, SEEK_SET); // seek back to beginning of file
+
+  while (fread(buff, sizeof(char), max, istream) != 0) {
+    printf("Send packet to %s:%d - %d of %d\n", inet_ntoa(from.sin_addr), ntohs(from.sin_port), n, packets);
+    buff[max +29] = n;
+    buff[max +30] = packets;
+    if (sendto(udp_socket, buff, sizeof(buff), 0, (struct sockaddr*) &from, slen) == -1){
+      die("sendto()");
+    }
+    msleep(10);
+    n++;
+    for (int r = 0; r <= max ; r++){
+      buff[r] = 0;
+    }
+  }
+  fclose (istream );
+  char buf[1];
+  buf[0] = n-1;
+  if (sendto(udp_socket, buf, strlen(buff)+1, 0, (struct sockaddr*) &from, slen) == -1){
+    die("sendto()");
+  }
+  sending=0;
+}
+int main(int argc, char *argv[]) {
   int device;
-  struct event_packet ev_pkt;
+  disp = XOpenDisplay(":0");
+  sending=0;
+  event_packet ev_pkt;
+  sending_t sock_t;
+  pthread_t ev_retreive_t, screen_send_t;
 
   int parseint = 1;
   uint16_t sensitivity = 0;
@@ -176,7 +229,7 @@ int main(int argc, char *argv[])
       exit(0);	    
     }
   }
-	
+
   if ((device = open("/dev/uinput", O_WRONLY | O_NONBLOCK)) < 0)
     die("error: open");
 
@@ -186,10 +239,11 @@ int main(int argc, char *argv[])
   printf("GfxTablet driver (protocol version %u) is ready and listening on 0.0.0.0:%u (UDP)\n"
 	 "Hint: Make sure that this port is not blocked by your firewall.\n", PROTOCOL_VERSION, GFXTABLET_PORT);
 
+
   signal(SIGINT, quit);
   signal(SIGTERM, quit);
 
-  while (recv(udp_socket, &ev_pkt, sizeof(ev_pkt), 0) >= 9) {		// every packet has at least 9 bytes
+  while (recvfrom(udp_socket, &ev_pkt, sizeof(event_packet), 0, (struct sockaddr *) &sock_t.from, &sock_t.slen) >= 9) {   // every packet has at least 9 bytes
     printf("."); fflush(0);
 
     if (memcmp(ev_pkt.signature, "GfxTablet", 9) != 0) {
@@ -210,12 +264,13 @@ int main(int argc, char *argv[])
       ev_pkt.pressure = 0;
     else
       ev_pkt.pressure = ev_pkt.pressure - sensitivity;
-		  
     printf("x: %hu, y: %hu, pressure: %hu\n", ev_pkt.x, ev_pkt.y, ev_pkt.pressure);
 
-    send_event(device, EV_ABS, ABS_X, ev_pkt.x/scaleX + cX);
-    send_event(device, EV_ABS, ABS_Y, ev_pkt.y/scaleY + cY);
-    send_event(device, EV_ABS, ABS_PRESSURE, ev_pkt.pressure);
+    if (ev_pkt.x != 0 && ev_pkt.y != 0) {
+      send_event(device, EV_ABS, ABS_X, ev_pkt.x);
+      send_event(device, EV_ABS, ABS_Y, ev_pkt.y);
+      send_event(device, EV_ABS, ABS_PRESSURE, ev_pkt.pressure);
+    }
 
     switch (ev_pkt.type) {
     case EVENT_TYPE_MOTION:
@@ -237,7 +292,12 @@ int main(int argc, char *argv[])
       printf("sent button: %hhi, %hhu\n", ev_pkt.button, ev_pkt.down);
       send_event(device, EV_SYN, SYN_REPORT, 1);
       break;
-
+    }
+    if (ev_pkt.down == 0 && ev_pkt.pressure == 0 &&
+        memcmp(inet_ntoa(sock_t.from.sin_addr), "0.0.0.0", 7) != 0 &&
+        pthread_create(&screen_send_t, NULL, send_current_screen, &sock_t)) {
+      fprintf(stderr, "Error creating thread\n");
+      return 1;
     }
   }
   close(udp_socket);
